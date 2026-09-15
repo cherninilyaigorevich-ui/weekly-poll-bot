@@ -1,0 +1,8 @@
+services:
+  weekly-poll-bot:
+    build: .
+    container_name: weekly-poll-bot
+    restart: unless-stopped
+
+    env_file:
+      - .env
