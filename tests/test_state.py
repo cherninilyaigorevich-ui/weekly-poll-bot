@@ -10,6 +10,6 @@ def test_next_monday():
 def test_persistence(tmp_path):
     path = tmp_path / "state.json"
     store = StateStore(path)
-    store.state = PollState("2026-10-19", "2026-10-19", "19:30", "Шторм", "published")
+    store.state = PollState("2026-10-19", "2026-10-19", "19:30", "Training venue", "published")
     store.save()
     assert StateStore(path).state.status == "published"
