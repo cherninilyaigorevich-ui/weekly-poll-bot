@@ -1,50 +1,146 @@
-# Weekly Poll Bot 🏃
+# 🏃 Weekly Poll Bot
 
-Telegram bot for weekly corporate training attendance polls, with Monday weather forecast and restart-safe publication state.
+**Reliable Telegram attendance polls for weekly team training — automated, weather-aware, and restart-safe.**
 
-## Features
-- Sunday 13:00 admin confirmation, 16:00 reminder, 19:00 auto-publication (Europe/Moscow).
-- Edit training date/time/location; corporate format and non-anonymous Telegram poll.
-- Open-Meteo forecast at training hour; weather failures do not block the poll.
-- Atomic JSON state in a persistent Docker volume; duplicate publication is blocked across restarts.
-- If Telegram request outcome is unknown, bot locks publication in `uncertain` until manually investigated.
-- `/poll` or `/status` in admin private chat; `/id` for diagnostics.
+[![CI](https://github.com/cherninilyaigorevich-ui/weekly-poll-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/cherninilyaigorevich-ui/weekly-poll-bot/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![Telegram](https://img.shields.io/badge/Telegram-aiogram_3-26A5E4?logo=telegram&logoColor=white)
+![Tests](https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white)
 
-## Stack
-Python 3.13, aiogram 3, APScheduler 3, httpx, Open-Meteo, Docker Compose, pytest, GitHub Actions.
+A production-deployed Python bot that prepares and publishes a non-anonymous Telegram poll for the next Monday training session. It combines scheduled admin approval, a location-specific weather forecast, and durable publication state to avoid accidental duplicate polls.
 
-## Deploy
-1. `cp .env.example .env` and set BOT_TOKEN, ADMIN_ID, GROUP_ID, TOPIC_ID. Keep `.env` private.
-2. Set accurate `WEATHER_LATITUDE` and `WEATHER_LONGITUDE` for the stadium (defaults are city center).
-3. **Before first deployment, inspect the group for an existing poll for the upcoming Monday.** If present, initialize persistent state as `published` (see migration below).
-4. `docker compose build && docker compose up -d`
-5. `docker compose ps && docker compose logs --tail=50`
+> **Portfolio focus:** containerized operations, scheduler automation, third-party API integration, persistence, failure handling, testing, and CI.
 
-## First deployment / migration
-The old version kept publication state only in RAM. **Do not start the new version without determining whether this week's poll has already been posted.**
+## ✨ Highlights
 
-The first deployment creates a named volume. To mark an existing poll as published before starting the bot, use:
+- **Automated workflow:** admin confirmation on Sunday at **13:00**, reminder at **16:00**, and automatic publication at **19:00** (Europe/Moscow).
+- **Editable training details:** date, time, and venue.
+- **Weather forecast:** Open-Meteo hourly forecast for the training location and time; unavailable weather does not prevent publishing.
+- **Restart-safe state:** atomic JSON writes to a named Docker volume.
+- **Duplicate prevention:** persistent `draft → publishing → published` transitions and an in-process async lock.
+- **Failure-aware publishing:** ambiguous Telegram API results enter `uncertain` and require manual reconciliation rather than blind retries.
+- **Operational visibility:** container logs, healthcheck, optional host-level watchdog, and admin `/status`.
+- **Automated checks:** pytest, Python syntax verification, Docker Compose validation and image build in GitHub Actions.
 
-```bash
-docker compose create
-docker compose run --rm --no-deps --entrypoint python weekly-poll-bot -c '
-from app.state import store
-store.get_or_create()
-store.set_status("published")
-print(store.state)
-'
+## 🏗️ Architecture
+
+```mermaid
+flowchart TD
+    A["Admin in Telegram"] --> B["aiogram handlers"]
+    S["APScheduler · Sunday 13:00 / 16:00 / 19:00"] --> P["Poll service"]
+    B --> P
+    P --> W["Open-Meteo forecast API"]
+    P <--> D[("JSON state · Docker volume")]
+    P --> T["Telegram Bot API"]
+    T --> G["Team chat · training topic"]
+    C["GitHub Actions"] --> Q["pytest + syntax + Docker build"]
 ```
 
-**Important:** `docker compose run` can start the application image only with the Python override above, not the bot. `published` applies only to the upcoming Monday and is automatically reset when the next weekly key changes. If no poll has been published, skip marking it; the first `/poll` creates a draft. Never run `/testpoll` in production; it was removed.
+### Publication state machine
 
-## Safety model
-At-most-once *attempt* semantics, not guaranteed exactly-once delivery: Telegram and local JSON cannot participate in one transaction. If the process crashes after Telegram accepts a request but before its acknowledgement, state stays `publishing` or `uncertain` and requires manual reconciliation. Do not reset state blindly.
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> publishing: publish requested
+    draft --> cancelled: admin cancels
+    publishing --> published: Telegram confirms poll
+    publishing --> uncertain: API failure / ambiguous result
+    publishing --> uncertain: restart during request
+    published --> [*]
+    cancelled --> [*]
+    uncertain --> [*]: manual reconciliation required
+```
 
-## Local tests
-`pip install -r requirements-dev.txt && pytest -q`
+**Delivery guarantee:** at-most-once automatic publication *attempt*, not exactly-once delivery. Telegram and the local state file cannot participate in a shared transaction. Never manually reset `publishing` or `uncertain` without checking the chat.
 
-## Monitoring
-Keep the existing host-level watchdog (`healthcheck.sh` + cron) outside the container; it can alert when the bot process is down. Docker healthcheck is supplementary and only checks that the process is alive, not Telegram connectivity.
+## 🛠️ Tech stack
 
-## Privacy
-No face recognition or photos are processed by this release. Tokens and personal identifiers are not committed to Git.
+| Layer | Technology |
+| --- | --- |
+| Bot / async runtime | Python 3.13, aiogram 3, asyncio |
+| Scheduling | APScheduler 3, Europe/Moscow |
+| Weather | Open-Meteo, httpx |
+| Persistence | Atomic JSON state, Docker named volume |
+| Deployment | Docker, Docker Compose, non-root container |
+| Quality | pytest, pytest-asyncio, GitHub Actions |
+| Operations | Docker logs, healthcheck, host watchdog |
+
+## 🚀 Quick start
+
+**Requirements:** Docker Engine with Docker Compose v2 and a Telegram bot token.
+
+```bash
+git clone https://github.com/cherninilyaigorevich-ui/weekly-poll-bot.git
+cd weekly-poll-bot
+cp .env.example .env
+# Fill in BOT_TOKEN, ADMIN_ID, GROUP_ID and TOPIC_ID in .env
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=50 weekly-poll-bot
+```
+
+**Important for existing installations:** check whether a poll for the upcoming Monday already exists *before* starting this version. See [migration and operations](docs/OPERATIONS.md). Never run multiple poller instances with the same token.
+
+### Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `BOT_TOKEN` | Telegram bot token (secret) |
+| `ADMIN_ID` | Telegram administrator ID |
+| `GROUP_ID` | Target Telegram group ID |
+| `TOPIC_ID` | Training topic/thread ID |
+| `TIMEZONE` | Scheduler and forecast timezone (default `Europe/Moscow`) |
+| `DEFAULT_TIME` | Training time (default `19:30`) |
+| `DEFAULT_PLACE` | Training venue |
+| `WEATHER_ENABLED` | Enable/disable weather forecast |
+| `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | Forecast coordinates |
+| `STATE_PATH` | Persistent JSON path (default `/data/state.json`) |
+
+**Never commit `.env`, bot tokens, or user data.** The public `.env.example` contains only placeholders.
+
+## 🧪 Tests and CI
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m compileall -q app tests
+docker compose config --quiet
+```
+
+The test suite covers date selection, state persistence, weather parsing, and prevention of duplicate publication. CI executes on pushes and pull requests. Tests mock Telegram calls and do not publish real polls.
+
+## 📅 Schedule
+
+| Sunday (MSK) | Action |
+| --- | --- |
+| 13:00 | Request administrator approval |
+| 16:00 | Remind administrator if still a draft |
+| 19:00 | Publish automatically if still a draft |
+
+Training defaults to **Monday at 19:30**. Admin commands and inline buttons allow reviewing or editing the draft before publication.
+
+## 🔒 Reliability and operational notes
+
+- The Docker healthcheck checks that the process is alive; it does **not** verify Telegram API connectivity.
+- The existing host-side watchdog can provide independent outage notifications.
+- A state of `publishing` after a crash, or `uncertain` after an API exception, requires manual investigation.
+- The bot is designed for a **single active instance**. Its JSON store is not a distributed lock.
+- Open-Meteo API usage must comply with the provider's applicable terms.
+
+See [Operations & recovery](docs/OPERATIONS.md) for checks, backups, and migration guidance.
+
+## 🗺️ Roadmap
+
+- [x] Scheduled Telegram training polls
+- [x] Weather forecast for training time
+- [x] Persistent state across container restarts
+- [x] Duplicate publication protection
+- [x] Unit tests and GitHub Actions
+- [ ] More end-to-end failure-path tests
+- [ ] Structured application metrics
+- [ ] Automated backup / restore drill
+
+---
+
+Built as a practical infrastructure automation and DevOps portfolio project.
