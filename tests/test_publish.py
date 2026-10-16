@@ -10,8 +10,8 @@ from app.state import PollState, StateStore
 async def test_no_duplicate_poll(tmp_path, monkeypatch):
     store = StateStore(tmp_path / "state.json")
     store.state = PollState(
-        week="2026-10-19",
-        date="2026-10-19",
+        week="2032-01-05",
+        date="2032-01-05",
         time="19:30",
         place="Training venue",
     )
