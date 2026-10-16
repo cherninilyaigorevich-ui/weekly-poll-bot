@@ -13,7 +13,7 @@ async def test_no_duplicate_poll(tmp_path, monkeypatch):
         week="2026-10-19",
         date="2026-10-19",
         time="19:30",
-        place='Стадион "Шторм"',
+        place="Training venue",
     )
     store.save()
 
@@ -21,7 +21,7 @@ async def test_no_duplicate_poll(tmp_path, monkeypatch):
     monkeypatch.setattr(
         poll_service,
         "get_preview",
-        AsyncMock(return_value="Тренировка"),
+        AsyncMock(return_value="Training"),
     )
 
     bot = SimpleNamespace(
