@@ -7,13 +7,12 @@
 ![Telegram](https://img.shields.io/badge/Telegram-aiogram_3-26A5E4?logo=telegram&logoColor=white)
 ![Tests](https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white)
 
-A production-deployed Python bot that prepares and publishes a non-anonymous Telegram poll for the next next event training session. It combines scheduled admin approval, a location-specific weather forecast, and durable publication state to avoid accidental duplicate polls.
+Python bot for scheduling Telegram attendance polls. Supports admin confirmation, weather forecasts, and persistent state to prevent duplicate publication.
 
-> **Portfolio focus:** containerized operations, scheduler automation, third-party API integration, persistence, failure handling, testing, and CI.
 
 ## ✨ Highlights
 
-- **Automated workflow:** admin confirmation on scheduled day at **configured approval time**, reminder at **configured reminder time**, and automatic publication at **configured publication time** (configured timezone).
+- **Automated workflow:** scheduled admin confirmation, reminder, and publication.
 - **Editable training details:** date, time, and venue.
 - **Weather forecast:** Open-Meteo hourly forecast for the training location and time; unavailable weather does not prevent publishing.
 - **Restart-safe state:** atomic JSON writes to a named Docker volume.
@@ -27,7 +26,7 @@ A production-deployed Python bot that prepares and publishes a non-anonymous Tel
 ```mermaid
 flowchart TD
     A["Admin in Telegram"] --> B["aiogram handlers"]
-    S["APScheduler · scheduled day configured approval time / configured reminder time / configured publication time"] --> P["Poll service"]
+    S["APScheduler · scheduled jobs"] --> P["Poll service"]
     B --> P
     P --> W["Open-Meteo forecast API"]
     P <--> D[("JSON state · Docker volume")]
@@ -79,7 +78,7 @@ docker compose ps
 docker compose logs --tail=50 weekly-poll-bot
 ```
 
-**Important for existing installations:** check whether a poll for the upcoming next event already exists *before* starting this version. See [migration and operations](docs/OPERATIONS.md). Never run multiple poller instances with the same token.
+**Important for existing installations:** check whether the next poll already exists *before* starting this version. See [migration and operations](docs/OPERATIONS.md). Never run multiple poller instances with the same token.
 
 ### Configuration
 
@@ -89,8 +88,8 @@ docker compose logs --tail=50 weekly-poll-bot
 | `ADMIN_ID` | Telegram administrator ID |
 | `GROUP_ID` | Target Telegram group ID |
 | `TOPIC_ID` | Training topic/thread ID |
-| `TIMEZONE` | Scheduler and forecast timezone (default `configured timezone`) |
-| `DEFAULT_TIME` | Training time (default `configured training time`) |
+| `TIMEZONE` | Scheduler and forecast timezone (default `UTC`) |
+| `DEFAULT_TIME` | Training time (default `18:00`) |
 | `DEFAULT_PLACE` | Training venue |
 | `WEATHER_ENABLED` | Enable/disable weather forecast |
 | `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | Forecast coordinates |
@@ -111,13 +110,7 @@ The test suite covers date selection, state persistence, weather parsing, and pr
 
 ## 📅 Schedule
 
-| scheduled day (local time) | Action |
-| --- | --- |
-| configured approval time | Request administrator approval |
-| configured reminder time | Remind administrator if still a draft |
-| configured publication time | Publish automatically if still a draft |
-
-Training defaults to **next event at configured training time**. Admin commands and inline buttons allow reviewing or editing the draft before publication.
+The scheduler runs the approval, reminder, and publication jobs each week. Configure the timezone and event details in `.env`.
 
 ## 🔒 Reliability and operational notes
 
@@ -140,6 +133,3 @@ See [Operations & recovery](docs/OPERATIONS.md) for checks, backups, and migrati
 - [ ] Structured application metrics
 - [ ] Automated backup / restore drill
 
----
-
-Built as a practical infrastructure automation and DevOps portfolio project.
