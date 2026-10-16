@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [main, feature/weather-and-reliability]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m compileall -q app
+      - run: pytest -q
+      - run: cp .env.example .env && docker compose config -q
+        env:
+          BOT_TOKEN: "123456:TEST"
+          ADMIN_ID: "1"
+          GROUP_ID: "-100123"
+          TOPIC_ID: "10"
