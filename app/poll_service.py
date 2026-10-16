@@ -164,6 +164,8 @@ def get_preview() -> str:
         f"📅 <b>Дата:</b> {date_text}\n"
         f"🕐 <b>Время:</b> {training.time}\n"
         f"📍 <b>Место:</b> {training.place}\n"
+        "🏢 <b>Формат:</b> Корпоративная\n"
+        "\n"
         "Укажи свой ответ 👇"
     )
 
@@ -190,6 +192,8 @@ async def publish_poll(
         f"📅 <b>Дата:</b> {date_text}\n"
         f"🕐 <b>Время:</b> {training.time}\n"
         f"📍 <b>Место:</b> {training.place}\n"
+        "🏢 <b>Формат:</b> Корпоративная\n"
+        "\n"
         "Укажи свой ответ 👇"
     )
 
