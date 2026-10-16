@@ -1,222 +1,108 @@
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+"""Poll domain logic. A publishing state prevents duplicates after restart.
+
+If Telegram accepts the poll but the response is lost, status becomes uncertain;
+manual verification is required rather than risking a second poll.
+"""
+import asyncio
+import logging
+from datetime import date
+from html import escape
 
 from aiogram import Bot
 
 from app.config import settings
+from app.state import store
+from app.weather import get_weather
+
+logger = logging.getLogger(__name__)
+_lock = asyncio.Lock()
+MONTHS = ("", "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
+DAYS = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
 
 
-MONTHS_RU = {
-    1: "января",
-    2: "февраля",
-    3: "марта",
-    4: "апреля",
-    5: "мая",
-    6: "июня",
-    7: "июля",
-    8: "августа",
-    9: "сентября",
-    10: "октября",
-    11: "ноября",
-    12: "декабря",
-}
-
-WEEKDAYS_RU = {
-    0: "понедельник",
-    1: "вторник",
-    2: "среда",
-    3: "четверг",
-    4: "пятница",
-    5: "суббота",
-    6: "воскресенье",
-}
+def format_date(value: date) -> str:
+    return f"{value.day} {MONTHS[value.month]} {value.year} ({DAYS[value.weekday()]})"
 
 
-@dataclass
-class TrainingPoll:
-    date: datetime
-    time: str
-    place: str
+def status() -> str:
+    return store.get_or_create().status
 
 
-current_training: TrainingPoll | None = None
-
-poll_published = False
-poll_cancelled = False
-poll_prepared = False
+def prepare_week():
+    return store.get_or_create()
 
 
-def get_next_monday() -> datetime:
-    now = datetime.now(
-        ZoneInfo(settings.timezone)
-    )
-
-    days_until_monday = (7 - now.weekday()) % 7
-
-    if days_until_monday == 0:
-        days_until_monday = 7
-
-    return now + timedelta(
-        days=days_until_monday
-    )
+def set_date(value: str):
+    from datetime import datetime
+    obj = store.get_or_create()
+    if obj.status != "draft":
+        raise ValueError("Голосование уже опубликовано, отменено или требует проверки")
+    obj.date = datetime.strptime(value, "%d.%m.%Y").date().isoformat()
+    store.save()
 
 
-def create_default_training() -> TrainingPoll:
-    return TrainingPoll(
-        date=get_next_monday(),
-        time=settings.default_time,
-        place=settings.default_place,
-    )
+def set_time(value: str):
+    from datetime import datetime
+    obj = store.get_or_create()
+    if obj.status != "draft":
+        raise ValueError("Нельзя изменить завершённое голосование")
+    datetime.strptime(value, "%H:%M")
+    obj.time = value
+    store.save()
 
 
-def prepare_week() -> TrainingPoll:
-    global current_training
-    global poll_published
-    global poll_cancelled
-    global poll_prepared
-
-    current_training = create_default_training()
-
-    poll_published = False
-    poll_cancelled = False
-    poll_prepared = True
-
-    return current_training
+def set_place(value: str):
+    obj = store.get_or_create()
+    if obj.status != "draft":
+        raise ValueError("Нельзя изменить завершённое голосование")
+    if not value.strip():
+        raise ValueError("Место не может быть пустым")
+    obj.place = value.strip()
+    store.save()
 
 
-def get_training() -> TrainingPoll:
-    global current_training
-
-    if current_training is None:
-        current_training = create_default_training()
-
-    return current_training
+def cancel_week():
+    if status() != "draft":
+        raise ValueError("Нельзя отменить опубликованное голосование")
+    store.set_status("cancelled")
 
 
-def format_training_date(
-    value: datetime,
-) -> str:
-    return (
-        f"{value.day} "
-        f"{MONTHS_RU[value.month]} "
-        f"{value.year} "
-        f"({WEEKDAYS_RU[value.weekday()]})"
-    )
+async def get_preview() -> str:
+    obj = store.get_or_create()
+    base = (f"🏃 <b>Тренировка</b>\n"
+            f"📅 <b>Дата:</b> {format_date(date.fromisoformat(obj.date))}\n"
+            f"🕐 <b>Время:</b> {escape(obj.time)}\n"
+            f"📍 <b>Место:</b> {escape(obj.place)}\n"
+            "🏢 <b>Формат:</b> Корпоративная")
+    forecast = await get_weather(date.fromisoformat(obj.date), obj.time)
+    if forecast:
+        base += "\n\n" + forecast
+    return base + "\n\nУкажи свой ответ 👇"
 
 
-def set_date(value: str) -> None:
-    training = get_training()
-
-    parsed_date = datetime.strptime(
-        value,
-        "%d.%m.%Y",
-    )
-
-    training.date = parsed_date.replace(
-        tzinfo=ZoneInfo(settings.timezone)
-    )
-
-
-def set_time(value: str) -> None:
-    get_training().time = value
-
-
-def set_place(value: str) -> None:
-    get_training().place = value
-
-
-def cancel_week() -> None:
-    global poll_cancelled
-
-    poll_cancelled = True
-
-
-def is_cancelled() -> bool:
-    return poll_cancelled
-
-
-def is_published() -> bool:
-    return poll_published
-
-
-def is_prepared() -> bool:
-    return poll_prepared
-
-
-def is_pending() -> bool:
-    return (
-        poll_prepared
-        and not poll_published
-        and not poll_cancelled
-    )
-
-
-def get_preview() -> str:
-    training = get_training()
-
-    date_text = format_training_date(
-        training.date
-    )
-
-    return (
-        "🏃 <b>Тренировка</b>\n"
-        f"📅 <b>Дата:</b> {date_text}\n"
-        f"🕐 <b>Время:</b> {training.time}\n"
-        f"📍 <b>Место:</b> {training.place}\n"
-        "🏢 <b>Формат:</b> Корпоративная\n"
-        "\n"
-        "Укажи свой ответ 👇"
-    )
-
-
-async def publish_poll(
-    bot: Bot,
-) -> bool:
-    global poll_published
-
-    if poll_published:
-        return False
-
-    if poll_cancelled:
-        return False
-
-    training = get_training()
-
-    date_text = format_training_date(
-        training.date
-    )
-
-    training_message = (
-        "🏃 <b>Тренировка</b>\n"
-        f"📅 <b>Дата:</b> {date_text}\n"
-        f"🕐 <b>Время:</b> {training.time}\n"
-        f"📍 <b>Место:</b> {training.place}\n"
-        "🏢 <b>Формат:</b> Корпоративная\n"
-        "\n"
-        "Укажи свой ответ 👇"
-    )
-
-    await bot.send_message(
-        chat_id=settings.group_id,
-        message_thread_id=settings.topic_id,
-        text=training_message,
-        parse_mode="HTML",
-    )
-
-    await bot.send_poll(
-        chat_id=settings.group_id,
-        message_thread_id=settings.topic_id,
-        question="Ты будешь на тренировке?",
-        options=[
-            "✅ Иду.",
-            "❌ Не иду.",
-            "❓ Под вопросом.",
-        ],
-        is_anonymous=False,
-        allows_multiple_answers=False,
-    )
-
-    poll_published = True
-
-    return True
+async def publish_poll(bot: Bot) -> bool:
+    async with _lock:
+        obj = store.get_or_create()
+        if obj.status != "draft":
+            return False
+        # Persist before network I/O: at-most-once attempt, with manual recovery.
+        store.set_status("publishing")
+        try:
+            text = await get_preview()
+            message = await bot.send_message(
+                chat_id=settings.group_id, message_thread_id=settings.topic_id,
+                text=text, parse_mode="HTML")
+            obj.message_id = message.message_id
+            store.save()
+            poll = await bot.send_poll(
+                chat_id=settings.group_id, message_thread_id=settings.topic_id,
+                question="Ты будешь на тренировке?",
+                options=["✅ Иду.", "❌ Не иду.", "❓ Под вопросом."],
+                is_anonymous=False, allows_multiple_answers=False)
+            obj.poll_id = poll.poll.id
+            store.set_status("published")
+            return True
+        except Exception:
+            logger.exception("Publication uncertain; inspect Telegram before manual recovery")
+            store.set_status("uncertain")
+            raise

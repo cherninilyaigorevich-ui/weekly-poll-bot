@@ -1,111 +1,55 @@
 import logging
-
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from app.config import settings
 from app.keyboards import main_keyboard
-from app.poll_service import (
-    get_preview,
-    is_cancelled,
-    is_published,
-    prepare_week,
-    publish_poll,
-)
-
+from app.poll_service import get_preview, prepare_week, publish_poll, status
 
 logger = logging.getLogger(__name__)
 
 
-async def request_confirmation(bot: Bot) -> None:
+async def request_confirmation(bot: Bot):
     prepare_week()
-
-    await bot.send_message(
-        chat_id=settings.admin_id,
-        text=(
-            "🗳 <b>Голосование на следующую тренировку</b>\n\n"
-            + get_preview()
-            + "\n\n"
-            + "<b>Опубликовать?</b>"
-        ),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
-
-    logger.info("Weekly poll confirmation sent")
-
-
-async def remind_admin(bot: Bot) -> None:
-    if is_published() or is_cancelled():
+    if status() != "draft":
+        logger.info("Sunday request skipped: status=%s", status())
         return
-
-    await bot.send_message(
-        chat_id=settings.admin_id,
-        text=(
-            "⏰ <b>Напоминание</b>\n\n"
-            "Голосование ещё не опубликовано.\n\n"
-            + get_preview()
-        ),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
-
-    logger.info("Weekly poll reminder sent")
+    await bot.send_message(settings.admin_id,
+                           "🗳 <b>Голосование на следующую тренировку</b>\n\n" +
+                           await get_preview() + "\n\nОпубликовать?",
+                           reply_markup=main_keyboard(), parse_mode="HTML")
 
 
-async def auto_publish(bot: Bot) -> None:
-    if is_published() or is_cancelled():
+async def remind_admin(bot: Bot):
+    prepare_week()
+    if status() != "draft":
         return
+    await bot.send_message(settings.admin_id,
+                           "⏰ <b>Напоминание</b>\n\n" + await get_preview(),
+                           reply_markup=main_keyboard(), parse_mode="HTML")
 
-    published = await publish_poll(bot)
 
-    if not published:
+async def auto_publish(bot: Bot):
+    prepare_week()
+    if status() != "draft":
         return
+    try:
+        published = await publish_poll(bot)
+        if published:
+            await bot.send_message(settings.admin_id, "🤖 Голосование автоматически опубликовано.")
+    except Exception:
+        logger.exception("Automatic publication failed; inspect Telegram")
+        try:
+            await bot.send_message(settings.admin_id, "🚨 Не удалось подтвердить публикацию. Проверь группу и /status.")
+        except Exception:
+            logger.exception("Could not notify admin")
 
-    await bot.send_message(
-        chat_id=settings.admin_id,
-        text="🤖 Голосование автоматически опубликовано.",
-    )
 
-    logger.info("Weekly poll automatically published")
-
-
-def create_scheduler(bot: Bot) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(
-        timezone=settings.timezone,
-    )
-
-    scheduler.add_job(
-        request_confirmation,
-        trigger="cron",
-        day_of_week="sun",
-        hour=13,
-        minute=0,
-        args=[bot],
-        id="weekly_poll_request",
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        remind_admin,
-        trigger="cron",
-        day_of_week="sun",
-        hour=16,
-        minute=0,
-        args=[bot],
-        id="weekly_poll_reminder",
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        auto_publish,
-        trigger="cron",
-        day_of_week="sun",
-        hour=19,
-        minute=0,
-        args=[bot],
-        id="weekly_poll_auto_publish",
-        replace_existing=True,
-    )
-
+def create_scheduler(bot: Bot):
+    scheduler = AsyncIOScheduler(timezone=settings.timezone)
+    for name, fn, hour in (("request", request_confirmation, 13),
+                           ("reminder", remind_admin, 16),
+                           ("auto_publish", auto_publish, 19)):
+        scheduler.add_job(fn, "cron", day_of_week="sun", hour=hour, minute=0,
+                          args=[bot], id=f"weekly_{name}", replace_existing=True,
+                          misfire_grace_time=300, max_instances=1, coalesce=True)
     return scheduler

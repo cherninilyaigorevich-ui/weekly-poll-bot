@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -8,16 +6,8 @@ from aiogram.types import CallbackQuery, Message
 
 from app.config import settings
 from app.keyboards import edit_keyboard, main_keyboard
-from app.poll_service import (
-    cancel_week,
-    get_preview,
-    prepare_week,
-    publish_poll,
-    set_date,
-    set_place,
-    set_time,
-)
-
+from app.poll_service import (cancel_week, get_preview, prepare_week,
+                              publish_poll, set_date, set_place, set_time, status)
 
 router = Router()
 
@@ -28,414 +18,122 @@ class EditTraining(StatesGroup):
     waiting_place = State()
 
 
-def is_admin(
-    user_id: int | None,
-) -> bool:
+def is_admin(user_id):
     return user_id == settings.admin_id
 
 
-async def send_admin_menu(
-    message: Message,
-) -> None:
-    await message.answer(
-        get_preview(),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
+async def menu(message: Message):
+    prepare_week()
+    s = status()
+    suffix = {"draft": "", "published": "\n\n✅ Уже опубликовано.",
+              "cancelled": "\n\n❌ Отменено.",
+              "publishing": "\n\n⚠️ Публикация выполняется.",
+              "uncertain": "\n\n⚠️ Проверь группу: результат публикации неизвестен."}[s]
+    await message.answer(await get_preview() + suffix,
+                         reply_markup=main_keyboard() if s == "draft" else None,
+                         parse_mode="HTML")
 
 
 @router.message(CommandStart())
-async def start_handler(
-    message: Message,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
-        await message.answer(
-            "🏃 Бот голосований по тренировкам."
-        )
-        return
-
-    await message.answer(
-        "🏃 <b>Тренировки</b>\n\n"
-        "Управление еженедельными голосованиями.\n\n"
-        "/poll — подготовить голосование",
-        parse_mode="HTML",
-    )
+async def start(message: Message):
+    if is_admin(message.from_user.id if message.from_user else None):
+        await message.answer("🏃 /poll — голосование; /status — состояние; /id — идентификаторы")
+    else:
+        await message.answer("🏃 Бот корпоративных тренировок.")
 
 
 @router.message(Command("id"))
-async def id_handler(
-    message: Message,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
+async def ids(message: Message):
+    if not is_admin(message.from_user.id if message.from_user else None):
         return
-
-    await message.answer(
-        f"👤 User ID: {user_id}\n"
-        f"💬 Chat ID: {message.chat.id}\n"
-        f"🧵 Topic ID: {message.message_thread_id}"
-    )
+    await message.answer(f"👤 User ID: {message.from_user.id}\n💬 Chat ID: {message.chat.id}\n🧵 Topic ID: {message.message_thread_id}")
 
 
-@router.message(Command("poll"))
-async def poll_handler(
-    message: Message,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
-        return
-
-    prepare_week()
-
-    await send_admin_menu(message)
+@router.message(Command("poll", "status"))
+async def poll_menu(message: Message):
+    if is_admin(message.from_user.id if message.from_user else None):
+        await menu(message)
 
 
-@router.message(Command("testpoll"))
-async def test_poll_handler(
-    message: Message,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
-        return
-
-    prepare_week()
-
-    published = await publish_poll(
-        message.bot
-    )
-
-    if published:
-        await message.answer(
-            "✅ Тестовое голосование опубликовано."
-        )
-    else:
-        await message.answer(
-            "⚠️ Голосование не опубликовано."
-        )
-
-
-@router.callback_query(
-    F.data == "poll_publish"
-)
-async def publish_callback(
-    callback: CallbackQuery,
-) -> None:
+@router.callback_query(F.data == "poll_publish")
+async def publish(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "Нет доступа.",
-            show_alert=True,
-        )
+        await callback.answer("Нет доступа", show_alert=True)
         return
-
-    published = await publish_poll(
-        callback.bot
-    )
-
-    if not published:
-        await callback.answer(
-            "Голосование уже опубликовано "
-            "или отменено.",
-            show_alert=True,
-        )
+    if status() != "draft":
+        await callback.answer("Уже опубликовано, отменено или требует проверки", show_alert=True)
         return
-
-    await callback.message.edit_text(
-        get_preview()
-        + "\n\n"
-        + "✅ <b>Голосование опубликовано.</b>",
-        parse_mode="HTML",
-    )
-
-    await callback.answer(
-        "Опубликовано."
-    )
-
-
-@router.callback_query(
-    F.data == "poll_edit"
-)
-async def edit_callback(
-    callback: CallbackQuery,
-) -> None:
-    if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "Нет доступа.",
-            show_alert=True,
-        )
-        return
-
-    await callback.message.edit_text(
-        get_preview()
-        + "\n\n"
-        + "<b>Что изменить?</b>",
-        reply_markup=edit_keyboard(),
-        parse_mode="HTML",
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(
-    F.data == "edit_back"
-)
-async def edit_back_callback(
-    callback: CallbackQuery,
-) -> None:
-    if not is_admin(callback.from_user.id):
-        return
-
-    await callback.message.edit_text(
-        get_preview(),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(
-    F.data == "edit_date"
-)
-async def edit_date_callback(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    if not is_admin(callback.from_user.id):
-        return
-
-    await state.set_state(
-        EditTraining.waiting_date
-    )
-
-    await callback.message.answer(
-        "📅 Введите дату тренировки.\n\n"
-        "Формат: <code>21.09.2026</code>",
-        parse_mode="HTML",
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(
-    F.data == "edit_time"
-)
-async def edit_time_callback(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    if not is_admin(callback.from_user.id):
-        return
-
-    await state.set_state(
-        EditTraining.waiting_time
-    )
-
-    await callback.message.answer(
-        "🕐 Введите время тренировки.\n\n"
-        "Формат: <code>19:30</code>",
-        parse_mode="HTML",
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(
-    F.data == "edit_place"
-)
-async def edit_place_callback(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    if not is_admin(callback.from_user.id):
-        return
-
-    await state.set_state(
-        EditTraining.waiting_place
-    )
-
-    await callback.message.answer(
-        "📍 Введите место тренировки:"
-    )
-
-    await callback.answer()
-
-
-@router.message(
-    EditTraining.waiting_date
-)
-async def receive_date(
-    message: Message,
-    state: FSMContext,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
-        return
-
-    value = (
-        message.text or ""
-    ).strip()
-
+    await callback.answer("Публикую…")
     try:
-        datetime.strptime(
-            value,
-            "%d.%m.%Y",
-        )
-
-    except ValueError:
-        await message.answer(
-            "❌ Неверный формат даты.\n\n"
-            "Например: "
-            "<code>21.09.2026</code>",
-            parse_mode="HTML",
-        )
+        result = await publish_poll(callback.bot)
+    except Exception:
+        await callback.message.answer("⚠️ Ошибка публикации. Проверь группу и логи, повтор автоматически заблокирован.")
         return
-
-    set_date(value)
-
-    await state.clear()
-
-    await message.answer(
-        "✅ Дата изменена.\n\n"
-        + get_preview(),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
+    if result:
+        await callback.message.edit_text(await get_preview() + "\n\n✅ <b>Опубликовано.</b>", parse_mode="HTML")
 
 
-@router.message(
-    EditTraining.waiting_time
-)
-async def receive_time(
-    message: Message,
-    state: FSMContext,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
+@router.callback_query(F.data == "poll_edit")
+async def edit(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id) or status() != "draft":
+        await callback.answer("Редактирование недоступно", show_alert=True)
         return
-
-    value = (
-        message.text or ""
-    ).strip()
-
-    try:
-        datetime.strptime(
-            value,
-            "%H:%M",
-        )
-
-    except ValueError:
-        await message.answer(
-            "❌ Неверный формат времени.\n\n"
-            "Например: "
-            "<code>19:30</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    set_time(value)
-
-    await state.clear()
-
-    await message.answer(
-        "✅ Время изменено.\n\n"
-        + get_preview(),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
+    await callback.message.edit_text(await get_preview() + "\n\n<b>Что изменить?</b>",
+                                     reply_markup=edit_keyboard(), parse_mode="HTML")
+    await callback.answer()
 
 
-@router.message(
-    EditTraining.waiting_place
-)
-async def receive_place(
-    message: Message,
-    state: FSMContext,
-) -> None:
-    user_id = (
-        message.from_user.id
-        if message.from_user
-        else None
-    )
-
-    if not is_admin(user_id):
-        return
-
-    value = (
-        message.text or ""
-    ).strip()
-
-    if not value:
-        await message.answer(
-            "❌ Место не может быть пустым."
-        )
-        return
-
-    set_place(value)
-
-    await state.clear()
-
-    await message.answer(
-        "✅ Место изменено.\n\n"
-        + get_preview(),
-        reply_markup=main_keyboard(),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(
-    F.data == "poll_cancel"
-)
-async def cancel_callback(
-    callback: CallbackQuery,
-) -> None:
+@router.callback_query(F.data == "edit_back")
+async def back(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "Нет доступа.",
-            show_alert=True,
-        )
+        await callback.answer("Нет доступа", show_alert=True)
         return
+    await callback.message.edit_text(await get_preview(), reply_markup=main_keyboard() if status() == "draft" else None, parse_mode="HTML")
+    await callback.answer()
 
-    cancel_week()
 
-    await callback.message.edit_text(
-        get_preview()
-        + "\n\n"
-        + "❌ <b>Голосование на эту неделю "
-        + "отменено.</b>",
-        parse_mode="HTML",
-    )
+@router.callback_query(F.data.in_({"edit_date", "edit_time", "edit_place"}))
+async def begin_edit(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id) or status() != "draft":
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    mapping = {"edit_date": (EditTraining.waiting_date, "📅 Введите дату: ДД.ММ.ГГГГ"),
+               "edit_time": (EditTraining.waiting_time, "🕐 Введите время: ЧЧ:ММ"),
+               "edit_place": (EditTraining.waiting_place, "📍 Введите место:")}
+    target, prompt = mapping[callback.data]
+    await state.set_state(target)
+    await callback.message.answer(prompt)
+    await callback.answer()
 
-    await callback.answer(
-        "Голосование отменено."
-    )
+
+@router.message(EditTraining.waiting_date)
+@router.message(EditTraining.waiting_time)
+@router.message(EditTraining.waiting_place)
+async def receive_edit(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id if message.from_user else None):
+        return
+    current = await state.get_state()
+    fn = {EditTraining.waiting_date.state: set_date,
+          EditTraining.waiting_time.state: set_time,
+          EditTraining.waiting_place.state: set_place}.get(current)
+    try:
+        fn((message.text or "").strip())
+    except (ValueError, TypeError) as exc:
+        await message.answer(f"❌ {exc}. Повторите ввод.")
+        return
+    await state.clear()
+    await menu(message)
+
+
+@router.callback_query(F.data == "poll_cancel")
+async def cancel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    try:
+        cancel_week()
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.message.edit_text(await get_preview() + "\n\n❌ <b>Отменено.</b>", parse_mode="HTML")
+    await callback.answer("Отменено")
