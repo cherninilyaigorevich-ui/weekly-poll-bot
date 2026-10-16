@@ -2,19 +2,18 @@
 
 **Reliable Telegram attendance polls for weekly team training — automated, weather-aware, and restart-safe.**
 
-[![CI](https://github.com/cherninilyaigorevich-ui/weekly-poll-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/cherninilyaigorevich-ui/weekly-poll-bot/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 ![Telegram](https://img.shields.io/badge/Telegram-aiogram_3-26A5E4?logo=telegram&logoColor=white)
 ![Tests](https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white)
 
-A production-deployed Python bot that prepares and publishes a non-anonymous Telegram poll for the next Monday training session. It combines scheduled admin approval, a location-specific weather forecast, and durable publication state to avoid accidental duplicate polls.
+A production-deployed Python bot that prepares and publishes a non-anonymous Telegram poll for the next next event training session. It combines scheduled admin approval, a location-specific weather forecast, and durable publication state to avoid accidental duplicate polls.
 
 > **Portfolio focus:** containerized operations, scheduler automation, third-party API integration, persistence, failure handling, testing, and CI.
 
 ## ✨ Highlights
 
-- **Automated workflow:** admin confirmation on Sunday at **13:00**, reminder at **16:00**, and automatic publication at **19:00** (Europe/Moscow).
+- **Automated workflow:** admin confirmation on scheduled day at **configured approval time**, reminder at **configured reminder time**, and automatic publication at **configured publication time** (configured timezone).
 - **Editable training details:** date, time, and venue.
 - **Weather forecast:** Open-Meteo hourly forecast for the training location and time; unavailable weather does not prevent publishing.
 - **Restart-safe state:** atomic JSON writes to a named Docker volume.
@@ -28,7 +27,7 @@ A production-deployed Python bot that prepares and publishes a non-anonymous Tel
 ```mermaid
 flowchart TD
     A["Admin in Telegram"] --> B["aiogram handlers"]
-    S["APScheduler · Sunday 13:00 / 16:00 / 19:00"] --> P["Poll service"]
+    S["APScheduler · scheduled day configured approval time / configured reminder time / configured publication time"] --> P["Poll service"]
     B --> P
     P --> W["Open-Meteo forecast API"]
     P <--> D[("JSON state · Docker volume")]
@@ -59,7 +58,7 @@ stateDiagram-v2
 | Layer | Technology |
 | --- | --- |
 | Bot / async runtime | Python 3.13, aiogram 3, asyncio |
-| Scheduling | APScheduler 3, Europe/Moscow |
+| Scheduling | APScheduler 3, configured timezone |
 | Weather | Open-Meteo, httpx |
 | Persistence | Atomic JSON state, Docker named volume |
 | Deployment | Docker, Docker Compose, non-root container |
@@ -71,7 +70,7 @@ stateDiagram-v2
 **Requirements:** Docker Engine with Docker Compose v2 and a Telegram bot token.
 
 ```bash
-git clone https://github.com/cherninilyaigorevich-ui/weekly-poll-bot.git
+git clone <REPOSITORY_URL>
 cd weekly-poll-bot
 cp .env.example .env
 # Fill in BOT_TOKEN, ADMIN_ID, GROUP_ID and TOPIC_ID in .env
@@ -80,7 +79,7 @@ docker compose ps
 docker compose logs --tail=50 weekly-poll-bot
 ```
 
-**Important for existing installations:** check whether a poll for the upcoming Monday already exists *before* starting this version. See [migration and operations](docs/OPERATIONS.md). Never run multiple poller instances with the same token.
+**Important for existing installations:** check whether a poll for the upcoming next event already exists *before* starting this version. See [migration and operations](docs/OPERATIONS.md). Never run multiple poller instances with the same token.
 
 ### Configuration
 
@@ -90,8 +89,8 @@ docker compose logs --tail=50 weekly-poll-bot
 | `ADMIN_ID` | Telegram administrator ID |
 | `GROUP_ID` | Target Telegram group ID |
 | `TOPIC_ID` | Training topic/thread ID |
-| `TIMEZONE` | Scheduler and forecast timezone (default `Europe/Moscow`) |
-| `DEFAULT_TIME` | Training time (default `19:30`) |
+| `TIMEZONE` | Scheduler and forecast timezone (default `configured timezone`) |
+| `DEFAULT_TIME` | Training time (default `configured training time`) |
 | `DEFAULT_PLACE` | Training venue |
 | `WEATHER_ENABLED` | Enable/disable weather forecast |
 | `WEATHER_LATITUDE`, `WEATHER_LONGITUDE` | Forecast coordinates |
@@ -112,13 +111,13 @@ The test suite covers date selection, state persistence, weather parsing, and pr
 
 ## 📅 Schedule
 
-| Sunday (MSK) | Action |
+| scheduled day (local time) | Action |
 | --- | --- |
-| 13:00 | Request administrator approval |
-| 16:00 | Remind administrator if still a draft |
-| 19:00 | Publish automatically if still a draft |
+| configured approval time | Request administrator approval |
+| configured reminder time | Remind administrator if still a draft |
+| configured publication time | Publish automatically if still a draft |
 
-Training defaults to **Monday at 19:30**. Admin commands and inline buttons allow reviewing or editing the draft before publication.
+Training defaults to **next event at configured training time**. Admin commands and inline buttons allow reviewing or editing the draft before publication.
 
 ## 🔒 Reliability and operational notes
 
