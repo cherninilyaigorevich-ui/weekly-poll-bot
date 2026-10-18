@@ -1,6 +1,10 @@
 """Open-Meteo forecast with bounded retries and graceful fallback."""
 import asyncio
 import logging
+import json
+import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from datetime import date
 
 import httpx
@@ -8,6 +12,38 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+CACHE_MAX_AGE = timedelta(hours=3)
+RETRY_DELAYS = (2, 5, 10)
+
+
+def _cache_path() -> Path:
+    return Path(settings.state_path).with_name('weather_cache.json')
+
+
+def _cached_forecast(target: date, hour: int) -> str | None:
+    try:
+        data = json.loads(_cache_path().read_text(encoding='utf-8'))
+        saved = datetime.fromisoformat(data['saved_at'])
+        if (data['date'] == target.isoformat() and data['hour'] == hour
+                and datetime.now(timezone.utc) - saved < CACHE_MAX_AGE):
+            return data['text']
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _save_forecast(target: date, hour: int, text: str) -> None:
+    path = _cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix('.tmp')
+        temp.write_text(json.dumps({'date': target.isoformat(), 'hour': hour,
+                                    'saved_at': datetime.now(timezone.utc).isoformat(),
+                                    'text': text}, ensure_ascii=False), encoding='utf-8')
+        os.replace(temp, path)
+    except OSError:
+        logger.warning('Weather cache write failed')
+
 WMO = {
     0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность",
     3: "пасмурно", 45: "туман", 48: "туман", 51: "морось",
@@ -48,14 +84,19 @@ async def get_weather(target: date, time: str) -> str | None:
         "start_date": target.isoformat(),
         "end_date": target.isoformat(),
     }
-    async with httpx.AsyncClient(timeout=5) as client:
-        for attempt in range(2):
+    async with httpx.AsyncClient(timeout=8) as client:
+        for attempt in range(len(RETRY_DELAYS) + 1):
             try:
                 response = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
                 response.raise_for_status()
-                return parse_forecast(response.json(), target, hour)
+                forecast = parse_forecast(response.json(), target, hour)
+                _save_forecast(target, hour, forecast)
+                return forecast
             except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
                 logger.warning("Weather request failed (attempt %s): %s", attempt + 1, type(exc).__name__)
-                if attempt == 0:
-                    await asyncio.sleep(0.5)
-    return None
+                if attempt < len(RETRY_DELAYS):
+                    await asyncio.sleep(RETRY_DELAYS[attempt])
+    cached = _cached_forecast(target, hour)
+    if cached:
+        logger.info('Using recent cached forecast for %s %02d:00', target, hour)
+    return cached
