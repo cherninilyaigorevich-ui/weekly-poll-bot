@@ -55,6 +55,25 @@ async def poll_menu(message: Message):
         await menu(message)
 
 
+@router.callback_query(F.data == "poll_weather")
+async def refresh_weather(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    if status() != "draft":
+        await callback.answer("Голосование уже завершено", show_alert=True)
+        return
+    await callback.answer("Обновляю прогноз…")
+    preview = await get_preview()
+    if "Прогноз на тренировку:" not in preview:
+        await callback.message.answer("⚠️ Прогноз пока недоступен. Попробуйте позже.")
+        return
+    await callback.message.edit_text(
+        "🗳 <b>Голосование на следующую тренировку</b>\n\n" +
+        preview + "\n\nОпубликовать?",
+        reply_markup=main_keyboard(), parse_mode="HTML")
+
+
 @router.callback_query(F.data == "poll_publish")
 async def publish(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
