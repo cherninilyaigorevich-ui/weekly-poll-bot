@@ -5,6 +5,7 @@ def main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Опубликовать", callback_data="poll_publish")],
         [InlineKeyboardButton(text="✏️ Изменить", callback_data="poll_edit")],
+        [InlineKeyboardButton(text="🔄 Обновить погоду", callback_data="poll_weather")],
         [InlineKeyboardButton(text="❌ Отменить", callback_data="poll_cancel")],
     ])
 
